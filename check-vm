@@ -1,0 +1,51 @@
+#!/bin/bash
+
+# 日志文件路径
+log_file="/root/manage-tools/check-vm.log"
+# 日志文件最大行数
+max_log_lines=500
+
+# 定义日志消息函数
+log_message() {
+    local message="[$(date '+%Y-%m-%d %H:%M:%S')]$1"
+    echo "$message" >> "$log_file"
+    # 确保日志文件行数不超过最大值
+    while [ $(wc -l < "$log_file") -gt $max_log_lines ]; do
+        sed -i '1d' "$log_file"
+    done
+}
+
+# 定义检查并启动虚拟机的函数
+check_and_start_vm() {
+    local vm_id=$1
+
+    # 获取虚拟机的状态
+    local vm_status=$(qm status "$vm_id" | grep 'status:' | awk '{print $2}')
+
+    # 根据状态执行相应的操作
+    case $vm_status in
+        stopped)
+            log_message "[INFO] 虚拟机 $vm_id 状态为 stopped，正在启动..."
+            qm start "$vm_id"
+            log_message "[SUCCESS] 虚拟机 $vm_id 已启动。"
+            ;;
+        running)
+            log_message "[INFO] 虚拟机 $vm_id 状态为 running，无需操作。"
+            ;;
+        *)
+            log_message "[ERROR] 未知的虚拟机状态: $vm_status"
+            return 1
+            ;;
+    esac
+}
+
+# 使用函数检查并启动虚拟机
+# 在此写入你想要的QVMIDs
+# 如 qvmids=(100 101 102)
+qvmids=(104 105)
+
+# 开始创建与删除过期快照
+for qvmid in ${qvmids[@]}
+do
+    check_and_start_vm $qvmid
+done

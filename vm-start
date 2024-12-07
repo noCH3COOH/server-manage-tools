@@ -1,0 +1,81 @@
+#!/bin/bash
+
+# YAML文件名
+YAML_FILE="/root/manage-tools/vms.yaml"
+# 日志文件名
+log_file="/root/manage-tools/vm-start.log"
+# 日志文件最大行数
+max_log_lines=500
+max_attempts=3
+MOUNT_POINT="/mnt/nvme1n1"
+
+# 记录日志的函数
+log() {
+    local message="[$(date '+%Y-%m-%d %H:%M:%S')]$1"
+    echo "$message" >> "$log_file"
+    # 确保日志文件行数不超过最大值
+    while [ $(wc -l < "$log_file") -gt $max_log_lines ]; do
+        sed -i '1d' "$log_file"
+    done
+}
+
+# 检查 /dev/nvme1n1 是否已挂载
+if df -h | grep -q /dev/nvme1n1; then
+    log "[INFO] /dev/nvme1n1 is already mounted."
+else
+    log "[INFO] /dev/nvme1n1 is not mounted. Trying to remount..."
+    attempt=0
+
+    # 尝试重新挂载3次
+    while [ $attempt -lt $max_attempts ]; do
+        mount /dev/nvme1n1 $MOUNT_POINT
+        if [ $? -eq 0 ]; then
+            log "[SUCCESS] Mount successful on attempt $((attempt+1))"
+            break
+        else
+            log "[ERROR] Mount failed on attempt $((attempt+1))"
+        fi
+        attempt=$((attempt+1))
+        sleep 5 # 等待5秒再尝试
+    done
+fi
+
+# 检查是否挂载成功
+if df -h | grep -q /dev/nvme1n1; then
+    log "[SUCCESS] Mount successful. Reading VM start order from $YAML_FILE..."
+    # 读取yaml文件并启动虚拟机
+    while IFS= read -r line; do
+        if [[ $line =~ "- vm_id:" ]]; then
+            vm_id=$(echo "$line" | cut -d ':' -f2 | xargs)
+        elif [[ $line =~ "  pre_delay:" ]]; then
+            pre_delay=$(echo "$line" | cut -d ':' -f2 | xargs)
+        elif [[ $line =~ "  post_delay:" ]]; then
+            post_delay=$(echo "$line" | cut -d ':' -f2 | xargs)
+        elif [[ $line =~ "  start_vm:" ]]; then
+            start_vm=$(echo "$line" | cut -d ':' -f2 | xargs)
+        fi
+
+        if [[ $start_vm == "true" ]]; then
+            log "[INFO] Waiting for pre-delay of $pre_delay seconds before starting VM $vm_id."
+            sleep "$pre_delay"
+            qm_out=$(qm start "$vm_id" 2>&1)
+            if [ $? -eq 0 ]; then
+                log "[SUCCESS] VM $vm_id started successfully."
+                start_vm="false"
+            elif [[ $qm_out =~ "already running" ]]; then
+                log "[INFO] VM $vm_id already running"
+                start_vm="false"
+            else
+                log "[ERROR] Failed to start VM $vm_id."
+            fi
+            log "[INFO] Waiting for post-delay of $post_delay seconds after starting VM$vm_id."
+            sleep "$post_delay"
+        fi
+    done < "$YAML_FILE"
+else
+    log "[ERROR] Mount failed after $max_attempts attempts. Cleaning up and rebooting..."
+    umount $MOUNT_POINT 2>/dev/null
+    rm -rf $MOUNT_POINT
+    reboot
+fi
+

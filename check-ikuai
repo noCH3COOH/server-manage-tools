@@ -1,0 +1,44 @@
+#!/bin/bash
+
+ip_address="192.168.66.1"
+max_retries=5
+retry_count=0
+log_file="/root/manage-tools/check-ikuai.log"
+max_log_lines=500
+
+check_connection() {
+    ping -c 1 $ip_address &> /dev/null
+    return $?
+}
+
+log_message() {
+    message="[$(date '+%Y-%m-%d %H:%M:%S')]$1"
+    echo "$message" >>$log_file
+    # Ensure log file contains no more than max_log_lines lines
+    while [ $(wc -l <$log_file) -gt $max_log_lines ]; do
+        sed -i '1d' $log_file
+    done
+}
+
+while [ $retry_count -lt $max_retries ]; do
+    if check_connection; then
+        message="[SUCCESS] IP $ip_address is accessible"
+        echo $message
+        log_message "$message"
+        exit 0
+    else
+        message="[ERROR] IP $ip_address is unaccessible. Retry $((retry_count+1))/$max_retries after rebooting ikuai"
+        echo $message
+        log_message "$message"
+        ((retry_count++))
+        # Assuming 'qm' is a command that reboots a VM. Replace with actual command if needed.
+        qm stop 100
+        qm start 100
+        sleep 60
+    fi
+done
+
+message="[ERROR] IP $ip_address is unaccessible after $max_retries attempts."
+echo $message
+log_message "$message"
+exit 1
